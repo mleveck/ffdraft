@@ -26,7 +26,7 @@ type Model struct {
 
 func NewModel(resetState bool) Model {
 	players := data.GetCorrectedPlayers()
-	draft := model.NewDraft(players, 12)
+	draft := model.NewDraft(players, 10)
 
 	// Load saved state unless we're resetting
 	if !resetState {

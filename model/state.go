@@ -50,7 +50,7 @@ func LoadDraftState() (DraftState, error) {
 			DraftedPlayers: make(map[string]bool),
 			CurrentPick:    1,
 			CurrentRound:   1,
-			TotalTeams:     12,
+			TotalTeams:     10,
 		}, nil
 	}
 
