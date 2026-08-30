@@ -130,6 +130,38 @@
     return cap !== undefined && (myPosCounts()[pos] || 0) >= cap;
   };
 
+  // Roster-legality guard (the caps' complement). Caps only bound maximums;
+  // late in a draft the binding constraint flips to minimums: with N picks
+  // left and N unfilled required slots, ONLY those positions are legal, and
+  // ESPN's UI enforces it. Run 2 of the 2026-08-30 mocks walked WR names at
+  // pick 159 that ESPN would never allow (only TE and K slots remained).
+  // Defaults match fnf; override per league via __draftAgent.requiredSlots /
+  // totalRounds.
+  A.requiredSlots = prev.requiredSlots || { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, 'D/ST': 1 };
+  A.totalRounds = prev.totalRounds || 17;
+  const mustFillPositions = () => {
+    if (!A.myTeamName) return null; // counts unknowable - guard inert
+    const c = myPosCounts();
+    const mineSoFar = Object.values(c).reduce((a, b) => a + b, 0);
+    const remaining = A.totalRounds - mineSoFar;
+    const need = [];
+    let deficit = 0;
+    for (const pos of Object.keys(A.requiredSlots)) {
+      const d = Math.max(0, A.requiredSlots[pos] - (c[pos] || 0));
+      if (d > 0) { need.push(pos); deficit += d; }
+    }
+    return deficit >= remaining ? need : null; // null = no restriction yet
+  };
+  // Single legality test used at every click point: under cap AND, once the
+  // must-fill window closes in, a position we still owe a slot. Unknown
+  // positions ('') stay allowed - better a pick than a lost clock.
+  const posAllowed = (pos) => {
+    if (!pos) return true;
+    if (atCap(pos)) return false;
+    const need = mustFillPositions();
+    return !need || need.includes(pos);
+  };
+
   const searchBox = () =>
     document.querySelector('input[placeholder*="Player" i]') ||
     document.querySelector('input[type="search"]');
@@ -148,9 +180,18 @@
   const tryDraftExact = async (name) => {
     if (!setSearch(name)) return false;
     await sleep(350); // let the filter re-render
+    // If something else (a concurrent syncQueue) retyped the box while we
+    // slept, the rows are filtered to the wrong name. This race walked past
+    // NINE available targets (incl. the live #1) in one pick of the second
+    // fnf mock. Re-assert our search once before trusting the rows.
+    const box = searchBox();
+    if (box && box.value !== name) {
+      setSearch(name);
+      await sleep(350);
+    }
     const hit = draftButtons().find((b) => rowName(b) === name);
-    if (hit && atCap(rowPos(hit))) {
-      say('SKIPPED ' + name + ': at ' + rowPos(hit) + ' cap');
+    if (hit && !posAllowed(rowPos(hit))) {
+      say('SKIPPED ' + name + ': ' + rowPos(hit) + ' capped or not a must-fill slot');
       setSearch('');
       return false;
     }
@@ -168,7 +209,7 @@
   const bestVisibleTarget = () => {
     let best = null, bestIx = Infinity;
     for (const b of draftButtons()) {
-      if (atCap(rowPos(b))) continue;
+      if (!posAllowed(rowPos(b))) continue;
       const ix = A.targets.indexOf(rowName(b));
       if (ix >= 0 && ix < bestIx) { bestIx = ix; best = b; }
     }
@@ -216,8 +257,8 @@
         // a live-fire pick blew through the RB cap because the last resort
         // ignored it while every visible row happened to be capped/avoided.
         const pick =
-          btns.find((b) => !A.avoidPositions.includes(rowPos(b)) && !atCap(rowPos(b))) ||
-          btns.find((b) => !atCap(rowPos(b))) ||
+          btns.find((b) => !A.avoidPositions.includes(rowPos(b)) && posAllowed(rowPos(b))) ||
+          btns.find((b) => posAllowed(rowPos(b))) ||
           btns[0];
         const name = rowName(pick);
         pick.click();
@@ -279,6 +320,7 @@
     myTurn: draftButtons().length > 0,
     roster: [...document.querySelectorAll('aside a, [class*=roster] a')].map((a) => a.textContent.trim()).filter(Boolean),
     myPosCounts: myPosCounts(),
+    mustFill: mustFillPositions(),
     picksSeen: [...seen].filter((t) => PICK_RE.test(t)),
     targets: A.targets,
     recentLog: A.log.slice(-10),
@@ -291,7 +333,7 @@
   A.setTargets = (list, avoid) => {
     A.targets = list.slice();
     if (avoid) A.avoidPositions = avoid;
-    window.__draftAgentCfg = { targets: A.targets, avoid: A.avoidPositions };
+    window.__draftAgentCfg = { targets: A.targets, avoid: A.avoidPositions, requiredSlots: A.requiredSlots, totalRounds: A.totalRounds };
     if (!A.myTeamName) say('WARNING: myTeamName unset - position caps are inert');
     say('targets set (' + A.targets.length + ')');
     setTimeout(() => { A.syncQueue().catch((e) => say('ERR syncQueue: ' + e.message)); }, 500);
@@ -314,10 +356,13 @@
       if (A.picking || draftButtons().length) { setSearch(''); return say('syncQueue aborted: on the clock'); }
       if (!setSearch(name)) return say('syncQueue: no search box');
       await sleep(500);
+      // Re-check after the sleep too: going on the clock mid-await is exactly
+      // the race that let this loop retype the box under pickSequence's feet.
+      if (A.picking || draftButtons().length) { setSearch(''); return say('syncQueue aborted: on the clock'); }
       const q = [...document.querySelectorAll('button.action-btn')]
         .filter((b) => b.textContent.trim().toUpperCase() === 'QUEUE')
         .find((b) => rowName(b) === name);
-      if (q && atCap(rowPos(q))) { say('not queueing ' + name + ': at ' + rowPos(q) + ' cap'); continue; }
+      if (q && !posAllowed(rowPos(q))) { say('not queueing ' + name + ': ' + rowPos(q) + ' capped or not a must-fill slot'); continue; }
       if (q) { q.click(); say('QUEUED: ' + name); await sleep(300); }
     }
     setSearch('');

@@ -33,6 +33,11 @@ on reacting in real time. The standing targets list IS your reaction.
    set QB to 1 if punting a backup). Caps are enforced at every click point
    and are what stops a stale list or fallback from drafting a third QB —
    the 16-team rehearsal did exactly that through three different paths.
+   For a non-fnf league also set `__draftAgent.requiredSlots` and
+   `__draftAgent.totalRounds` (defaults `{QB:1,RB:2,WR:2,TE:1,K:1,'D/ST':1}`
+   / 17): they drive the must-fill guard — once my remaining picks ≤ my
+   unfilled required slots, the agent drafts only positions still owed,
+   matching what ESPN's UI would allow anyway.
 4. Push initial targets (Phase 3 judgment applies from pick one) via
    `__draftAgent.setTargets([...], ['K','D/ST'])` — setTargets re-mirrors the
    ESPN queue automatically; never assign `A.targets` directly.
@@ -169,3 +174,16 @@ returned '' on every row, every atCap() silently no-oped, and the roster
 ended with FOUR QBs under a QB:1 cap. rowPos now reads
 .playerinfo__playerpos (fix in agent.js) — but a selector that breaks
 silently disarms every hard rail, so verify, don't assume.
+
+Second run same day, fixed agent: 17/17 legal roster, every cap held (QB
+stopped at exactly 1, RB at exactly 5). Two more fixes came out of it, both
+in agent.js: (1) setTargets while ON the clock races syncQueue against
+pickSequence for the search box — one pick walked past nine AVAILABLE
+targets because the box kept getting retyped under it (tryDraftExact now
+re-asserts its search; syncQueue re-checks the clock after each sleep);
+(2) the must-fill guard (requiredSlots/totalRounds above) exists because the
+endgame walked WR names when only TE and K slots remained — ESPN would have
+refused them anyway, and each dead search burns ~350ms of clock. Strategy
+lesson for 2-4s/pick auto rooms: pushes lag 3-6 rounds, so shape the FIRST
+list for balance (the all-RB VOR top ran my roster to RB5/WR0 by round 5)
+and front-load TE — the entire TE middle class went in rounds 6-10.
