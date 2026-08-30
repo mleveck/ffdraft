@@ -12,10 +12,13 @@
 // Usage (from Claude via javascript_tool, or DevTools console):
 //   1. Open the ESPN draft room, ideally before the draft starts.
 //   2. Paste/inject this whole file.
-//   3. Update strategy any time:  __draftAgent.targets = ['Name', ...]
-//      (ranked, best first; exact display names as shown in the player list)
+//   3. Update strategy any time:  __draftAgent.setTargets(['Name', ...], ['K','D/ST'])
+//      (ranked, best first; exact ESPN display names — "Broncos D/ST", not
+//      "Denver Broncos". setTargets also re-mirrors the ESPN queue; the
+//      second argument optionally replaces avoidPositions.)
 //   4. Read state:               __draftAgent.state()
-//      Watch console tags:       [AGENT] actions, [PICK] every completed pick.
+//      Sync picks from state().picksSeen (stable buffer) — console clear
+//      proved unreliable. [AGENT]/[PICK] console tags remain for humans.
 //   5. Stop:                     __draftAgent.stop()
 //
 // Hard-won details encoded below:
@@ -104,12 +107,48 @@
     return !!hit;
   };
 
+  // Best visible target: the button whose row name has the lowest targets
+  // index. Instant (no search round trip), but limited to the ~15 rendered
+  // rows of the virtualized list.
+  const bestVisibleTarget = () => {
+    let best = null, bestIx = Infinity;
+    for (const b of draftButtons()) {
+      const ix = A.targets.indexOf(rowName(b));
+      if (ix >= 0 && ix < bestIx) { bestIx = ix; best = b; }
+    }
+    return { best, bestIx };
+  };
+
+  // The 2026-08-30 rehearsal lost one clock race walking dead names at 500ms
+  // each while autodrafting bots picked every 1-2s. So: click a visible
+  // top-3 target instantly; otherwise search-walk the live list under a time
+  // budget, and past the budget take the best visible target or fallback.
   const pickSequence = async () => {
     A.picking = true;
+    const deadline = Date.now() + 8000;
     try {
-      for (const name of A.targets) {
+      let { best, bestIx } = bestVisibleTarget();
+      if (best && bestIx < 3) {
+        const name = rowName(best);
+        best.click();
+        say('DRAFT clicked: ' + name + ' (target, visible)');
+        return;
+      }
+      // Walk the LIVE targets array (restart if replaced mid-walk) until the
+      // budget runs out or we reach a target we already know is visible.
+      let list = A.targets, i = 0;
+      while (i < list.length && i < (bestIx === Infinity ? list.length : bestIx) && Date.now() < deadline) {
+        if (list !== A.targets) { list = A.targets; i = 0; say('targets replaced mid-pick, restarting walk'); continue; }
+        const name = list[i++];
         if (await tryDraftExact(name)) return;
         if (!draftButtons().length) return; // pick already went through / clock lost
+      }
+      ({ best, bestIx } = bestVisibleTarget());
+      if (best) {
+        const name = rowName(best);
+        best.click();
+        say('DRAFT clicked: ' + name + ' (target, visible)');
+        return;
       }
       await sleep(400);
       const btns = draftButtons();
@@ -142,7 +181,10 @@
   );
 
   // --- State tracking -------------------------------------------------------
-  const seen = new Set();
+  // The seen-set lives on window so a re-injection doesn't replay old picks.
+  // Read picks via state().picksSeen (a stable buffer) rather than console
+  // logs: read_console_messages' clear option proved unreliable in rehearsal.
+  const seen = (window.__seenPicksSet = window.__seenPicksSet || new Set());
   A.intervals.push(
     setInterval(() => {
       try {
@@ -152,7 +194,15 @@
           .filter((e) => e.children.length <= 3 && /R\d+, P\d+ - /.test(e.textContent) && e.textContent.length < 120)
           .forEach((el) => {
             const txt = el.textContent.replace(/\s+/g, ' ').trim();
-            if (!seen.has(txt)) { seen.add(txt); console.log('[PICK] ' + txt); }
+            if (!seen.has(txt)) {
+              seen.add(txt);
+              console.log('[PICK] ' + txt);
+              // Self-prune: a drafted player can never be a target again, and
+              // dead names slow the pick walk (that lost a clock race once).
+              const nm = txt.split(' / ')[0].trim();
+              const ix = A.targets.indexOf(nm);
+              if (ix >= 0) { A.targets.splice(ix, 1); say('pruned drafted target: ' + nm); }
+            }
           });
       } catch (e) {}
     }, 1000)
@@ -168,12 +218,30 @@
     recentLog: A.log.slice(-10),
   });
 
+  // Preferred way to push a new plan: assigns targets and re-mirrors the ESPN
+  // queue in the background. In rehearsal, ESPN autopick swallowed two turns
+  // whose targets were only in A.targets — an up-to-date queue would have
+  // drafted our list anyway.
+  A.setTargets = (list, avoid) => {
+    A.targets = list.slice();
+    if (avoid) A.avoidPositions = avoid;
+    say('targets set (' + A.targets.length + ')');
+    setTimeout(() => { A.syncQueue().catch((e) => say('ERR syncQueue: ' + e.message)); }, 500);
+    return A.targets.length;
+  };
+
   // Mirror the top targets into ESPN's native pick queue. The queue is the
   // failsafe of last resort: if the page (or the whole machine) dies and
   // ESPN's autopick takes over, it drafts from the queue before its own
   // ranks. Call after each targets update; aborts instantly if we go on the
   // clock so it never fights pickSequence for the search box.
   A.syncQueue = async (n = 8) => {
+    // Empty the queue first: stale entries outrank the new plan, and ESPN's
+    // autopick drafts the queue top-down.
+    for (const rm of buttons().filter((b) => b.textContent.trim().toUpperCase() === 'REMOVE')) {
+      rm.click();
+      await sleep(150);
+    }
     for (const name of A.targets.slice(0, n)) {
       if (A.picking || draftButtons().length) { setSearch(''); return say('syncQueue aborted: on the clock'); }
       if (!setSearch(name)) return say('syncQueue: no search box');

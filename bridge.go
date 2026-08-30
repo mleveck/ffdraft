@@ -331,7 +331,14 @@ func runBridge(league data.League, offline, classic, newDraft bool, opts bridgeO
 			if state.DraftedPlayers[p.Name] {
 				continue
 			}
-			out.Targets = append(out.Targets, p.Name)
+			name := p.Name
+			// The draft agent matches ESPN display names exactly, and ESPN
+			// shows defenses as "Broncos D/ST", not "Denver Broncos".
+			if p.Position == model.DST && !strings.Contains(name, "D/ST") {
+				words := strings.Fields(name)
+				name = words[len(words)-1] + " D/ST"
+			}
+			out.Targets = append(out.Targets, name)
 			if len(out.Targets) == opts.targets {
 				break
 			}

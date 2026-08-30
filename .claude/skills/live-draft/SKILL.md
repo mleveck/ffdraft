@@ -27,8 +27,9 @@ on reacting in real time. The standing targets list IS your reaction.
 3. Inject the entire contents of `livedraft/agent.js` via javascript_tool.
    Confirm `[AGENT] draft agent installed` in the console. Injecting before
    the draft starts also captures the WebSocket (`__draftAgent.wsLog`).
-4. Push initial targets (Phase 3 judgment applies from pick one) and
-   `avoidPositions = ['K','D/ST']`, then `await __draftAgent.syncQueue()`.
+4. Push initial targets (Phase 3 judgment applies from pick one) via
+   `__draftAgent.setTargets([...], ['K','D/ST'])` — setTargets re-mirrors the
+   ESPN queue automatically; never assign `A.targets` directly.
 5. Confirm with the user: team name, draft slot, any players they love/hate,
    keeper/rule quirks. Encode love/hate directly into targets ordering.
 
@@ -36,19 +37,24 @@ on reacting in real time. The standing targets list IS your reaction.
 
 Each cycle, in one batch where possible:
 
-1. `read_console_messages` pattern `\[(PICK|AGENT)\]` with `clear: true`.
-2. Parse `[PICK] Player Name / TEAM POS R<n>, P<n> - Fantasy Team` lines.
+1. Read new picks from `__draftAgent.state().picksSeen` via javascript_tool,
+   slicing past the ones you've already processed (track the count). Do NOT
+   rely on `read_console_messages` with `clear: true` — clearing proved
+   unreliable in rehearsal and you'll re-read the whole history.
+2. Parse `Player Name / TEAM POS R<n>, P<n> - Fantasy Team` entries.
    Sync: `./ffdraft -league $1 -mark "A; B; C" -mine "D"` (`-mine` for picks
    by my team). Chase any `unmatched` entries immediately — an unsynced pick
    silently corrupts every later recommendation. Use the suggestions, or
    `-status` top lists, to resolve; `-unmark` fixes mistakes.
 3. `./ffdraft -league $1 -status` → the league-adjusted board, my roster,
    position counts, lineup requirements.
-4. Apply the judgment layer (Phase 3) → new ranked targets.
-5. Push atomically:
-   `__draftAgent.targets = [...]; __draftAgent.avoidPositions = [...]`.
-   If targets changed materially and my pick is >4 picks away, also
-   `await __draftAgent.syncQueue()`.
+4. Apply the judgment layer (Phase 3) → new ranked targets. The list must
+   already be correct for my next TWO picks: at the snake turn they are only
+   ~9 picks apart, which is shorter than one sync cycle when opponents
+   autodraft fast. Encode both picks' needs now, not after the first fires.
+5. Push atomically: `__draftAgent.setTargets([...], [...avoid])` — one call,
+   assigns and re-mirrors the ESPN queue. Player names must be ESPN display
+   names (`-targets` already emits "Broncos D/ST" style for defenses).
 6. Report to the user in one or two lines: picks since last check, whom the
    agent took or will likely take, anything you changed and why.
 
@@ -115,3 +121,11 @@ The Mock Draft Lobby's "Practice Draft" runs this exact league's settings
 against ESPN auto teams with a 30s clock — the harshest timing environment.
 A full rehearsal (all phases, real bridge syncs) is the best preflight; the
 practice draft does not touch the real league.
+
+Rehearsal history (16-team, 2026-08-30): 15/15 legal roster, zero unmatched
+names across 240 picks. What it taught, now encoded above: all-auto rooms hit
+1-2s/pick in late rounds (a real draft never does — humans plus a 30s+ clock
+give you minutes between your picks); a whole positional tier can vanish in
+ONE 16-team round (ten WR/TEs went in round 5); K/D/ST runs start around
+round 7 in deep leagues; and the ESPN queue mirror is what saves the turns
+you lose — keep it synced via setTargets, always.
