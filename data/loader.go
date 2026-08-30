@@ -274,7 +274,9 @@ func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]esp
 		teamBye[t.ID] = t.ByeWeek
 	}
 
-	filter := `{"players":{"limit":600,"sortAdp":{"sortAsc":true,"sortPriority":1}}}`
+	// Deep enough to cover every Boris-ranked player; the ADP sort pushes
+	// never-drafted players (deep kickers etc.) past a smaller window.
+	filter := `{"players":{"limit":1500,"sortAdp":{"sortAsc":true,"sortPriority":1}}}`
 	playerData, err := fetchWithCache(
 		"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"+season+"/segments/0/leaguedefaults/3?view=kona_player_info",
 		"espn-players.json", map[string]string{"x-fantasy-filter": filter}, offline)
