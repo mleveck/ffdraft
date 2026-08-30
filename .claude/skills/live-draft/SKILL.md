@@ -165,8 +165,12 @@ round 7 in deep leagues; and the ESPN queue mirror is what saves the turns
 you lose — keep it synced via setTargets, always.
 
 Fresh-context mock (10-team fnf, 2026-08-30): a "Practice Draft" room can
-START THE CLOCK the moment you join — inject and configure before joining,
-or expect ESPN to autopick your early turns. And smoke-test the caps right
+START THE CLOCK the moment you join — a mock-only artifact. A real league
+draft room opens well before the draft starts (Matt: expect plenty of
+pre-clock time), so do ALL of setup there calmly: inject, smoke-test
+rowPos/caps, set myTeamName + caps + requiredSlots, push the opening list,
+confirm the queue mirrored. In a mock, inject and configure within seconds
+of joining or expect ESPN to autopick your early turns. And smoke-test the caps right
 after injection: run rowPos on a live row (or confirm a SKIPPED /
 "not queueing" log) before trusting them. That mock's row markup
 concatenated cell text with no whitespace, the \b-anchored position regex
