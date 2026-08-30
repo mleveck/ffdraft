@@ -328,6 +328,14 @@ func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]str
 
 var suffixes = map[string]bool{"jr": true, "sr": true, "ii": true, "iii": true, "iv": true, "v": true}
 
+// NormalizeName exposes the loader's name normalization (lowercase,
+// alphanumerics only, generational suffixes stripped) for callers that need
+// to match externally-sourced names (e.g. the live-draft bridge) against
+// board names.
+func NormalizeName(name string) string {
+	return normalizeName(name)
+}
+
 func normalizeName(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {

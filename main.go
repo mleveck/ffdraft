@@ -21,6 +21,12 @@ func main() {
 	flag.BoolVar(&dump, "dump", false, "Print the loaded draft board and exit")
 	var classic bool
 	flag.BoolVar(&classic, "classic", false, "Use Boris Chen's combined board directly instead of the league-adjusted VOR interleave")
+	var bridge bridgeOpts
+	flag.StringVar(&bridge.mark, "mark", "", "Bridge: mark players drafted (semicolon-separated names) and exit")
+	flag.StringVar(&bridge.unmark, "unmark", "", "Bridge: unmark players (semicolon-separated names) and exit")
+	flag.StringVar(&bridge.mine, "mine", "", "Bridge: mark players drafted by MY team (semicolon-separated) and exit")
+	flag.BoolVar(&bridge.status, "status", false, "Bridge: print JSON status (roster, needs, top available) and exit")
+	flag.IntVar(&bridge.targets, "targets", 0, "Bridge: print top-N available player names as JSON and exit")
 	flag.Parse()
 
 	league, ok := data.Leagues[leagueKey]
@@ -32,6 +38,14 @@ func main() {
 		sort.Strings(keys)
 		fmt.Printf("Unknown league %q. Available: %v\n", leagueKey, keys)
 		os.Exit(1)
+	}
+
+	if bridge.active() {
+		if err := runBridge(league, offline, classic, newDraft, bridge); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if dump {

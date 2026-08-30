@@ -38,6 +38,7 @@
 
   const A = (window.__draftAgent = {
     targets: [],          // ranked player display names, best first
+    avoidPositions: [],   // e.g. ['K','D/ST','QB'] - skipped by the fallback pick
     log: [],
     wsLog: [],
     picking: false,       // guard so the async pick sequence runs once per turn
@@ -71,6 +72,10 @@
     );
   const rowName = (btn) =>
     btn.closest('.fixedDataTableCellGroupLayout_cellGroup')?.querySelector('a')?.textContent.trim() || '';
+  const rowPos = (btn) => {
+    const txt = btn.closest('.fixedDataTableCellGroupLayout_cellGroup')?.textContent || '';
+    return (txt.match(/\b(QB|RB|WR|TE|K|D\/ST)\b/) || [])[1] || '';
+  };
 
   const searchBox = () =>
     document.querySelector('input[placeholder*="Player" i]') ||
@@ -109,8 +114,10 @@
       await sleep(400);
       const btns = draftButtons();
       if (btns.length) {
-        const name = rowName(btns[0]);
-        btns[0].click();
+        // Fallback: best listed player whose position we aren't avoiding.
+        const pick = btns.find((b) => !A.avoidPositions.includes(rowPos(b))) || btns[0];
+        const name = rowName(pick);
+        pick.click();
         say('DRAFT clicked: ' + name + ' (best-available fallback)');
       }
     } catch (e) {
@@ -160,6 +167,25 @@
     targets: A.targets,
     recentLog: A.log.slice(-10),
   });
+
+  // Mirror the top targets into ESPN's native pick queue. The queue is the
+  // failsafe of last resort: if the page (or the whole machine) dies and
+  // ESPN's autopick takes over, it drafts from the queue before its own
+  // ranks. Call after each targets update; aborts instantly if we go on the
+  // clock so it never fights pickSequence for the search box.
+  A.syncQueue = async (n = 8) => {
+    for (const name of A.targets.slice(0, n)) {
+      if (A.picking || draftButtons().length) { setSearch(''); return say('syncQueue aborted: on the clock'); }
+      if (!setSearch(name)) return say('syncQueue: no search box');
+      await sleep(500);
+      const q = [...document.querySelectorAll('button.action-btn')]
+        .filter((b) => b.textContent.trim().toUpperCase() === 'QUEUE')
+        .find((b) => rowName(b) === name);
+      if (q) { q.click(); say('QUEUED: ' + name); await sleep(300); }
+    }
+    setSearch('');
+    say('syncQueue done');
+  };
 
   A.stop = () => { A.intervals.forEach(clearInterval); A.intervals = []; say('agent stopped'); };
 
