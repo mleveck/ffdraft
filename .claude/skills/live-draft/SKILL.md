@@ -38,6 +38,13 @@ on reacting in real time. The standing targets list IS your reaction.
    / 17): they drive the must-fill guard — once my remaining picks ≤ my
    unfilled required slots, the agent drafts only positions still owed,
    matching what ESPN's UI would allow anyway.
+   Finally run `__draftAgent.selfTest()` — and RE-RUN it the moment the
+   draft UI goes live: the pre-clock room and the live room may render
+   different DOMs, and ESPN can remount everything when picking begins.
+   Healthy live room: `searchBox` true, `posEls` > 0, every
+   `actionBtnSample` entry with a non-empty `pos`. The agent also logs
+   `WARNING: rowPos blind` if it ever sees DRAFT buttons it can't read
+   positions from — treat that as guards-offline and intervene.
 4. Push initial targets (Phase 3 judgment applies from pick one) via
    `__draftAgent.setTargets([...], ['K','D/ST'])` — setTargets re-mirrors the
    ESPN queue automatically; never assign `A.targets` directly.

@@ -226,6 +226,15 @@
     // walk before the list reached the positions the pick actually needed.
     const deadline = Date.now() + 15000;
     try {
+      // Canary: DRAFT buttons whose position we cannot read mean every cap
+      // and the must-fill guard are silently inert (the first fnf mock drafted
+      // 4 QBs exactly this way). Scream once so the operator sees it in the
+      // [AGENT] log instead of discovering it from the roster.
+      const btnsNow = draftButtons();
+      if (btnsNow.length && btnsNow.every((b) => !rowPos(b)) && !A._warnedBlindPos) {
+        A._warnedBlindPos = true;
+        say('WARNING: rowPos blind on ALL visible rows - position caps and must-fill guard are INERT. DOM likely changed; check selfTest().');
+      }
       let { best, bestIx } = bestVisibleTarget();
       if (best && bestIx < 3) {
         const name = rowName(best);
@@ -367,6 +376,25 @@
     }
     setSearch('');
     say('syncQueue done');
+  };
+
+  // Selector health probe. Run it right after injection AND again the moment
+  // the draft UI mounts (the pre-draft room and the live room may render
+  // different DOMs; ESPN can remount everything when picking begins). Healthy
+  // live room: searchBox true, posEls > 0, and every actionBtnSample entry
+  // has a non-empty pos. Pre-clock some of these being 0/false is expected -
+  // re-run at first pick before trusting the guards.
+  A.selfTest = () => {
+    const btns = [...document.querySelectorAll('button.action-btn')];
+    return {
+      searchBox: !!searchBox(),
+      actionBtns: btns.length,
+      posEls: document.querySelectorAll('.playerinfo__playerpos').length,
+      actionBtnSample: btns.slice(0, 5).map((b) => ({ name: rowName(b), pos: rowPos(b) })),
+      picksParsed: [...(window.__seenPicksSet || [])].filter((t) => PICK_RE.test(t)).length,
+      myTeamName: A.myTeamName,
+      myPosCounts: myPosCounts(),
+    };
   };
 
   A.stop = () => { A.intervals.forEach(clearInterval); A.intervals = []; say('agent stopped'); };
