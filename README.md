@@ -171,6 +171,19 @@ files, and the committed binary as a last resort. Core math
 (`LeaguePoints`, `ReplacementLevels`, `ClusterDesc`) is unit-tested; the
 data joins are validated empirically via `-dump`.
 
+## Live draft agent (experimental)
+
+`livedraft/agent.js` is an in-page script for having Claude run the draft
+autonomously via browser automation. Injected into the ESPN draft room, it
+keeps autopick off, logs every completed pick to the console (`[PICK]` tags),
+and when you're on the clock drafts the first available player from a ranked
+`__draftAgent.targets` list — search-filtered and name-verified before
+clicking, reacting in under a second. Claude then works at a comfortable
+cadence: read the pick log, recompute the board with ffdraft, update the
+target list. Validated end-to-end in a full 17-round ESPN practice draft
+(2026-08-30); see the header comment in the file for usage and the DOM
+gotchas it works around.
+
 ## Known limitations
 
 - ESPN projections are a single source; projection error flows into the
