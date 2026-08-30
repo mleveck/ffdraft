@@ -11,7 +11,13 @@
 //
 // Usage (from Claude via javascript_tool, or DevTools console):
 //   1. Open the ESPN draft room, ideally before the draft starts.
-//   2. Paste/inject this whole file.
+//   2. Paste/inject this whole file, then configure the hard rails:
+//        __draftAgent.myTeamName = 'Exact Team Name From Picks Panel';
+//        __draftAgent.positionCaps = {QB: 2, TE: 2, K: 1, 'D/ST': 1};
+//      Caps are enforced at every click point (targets, visible-target
+//      shortcut, fallback, queue sync) and count from the live pick feed, so
+//      a stale list or fallback can never overfill a position. Caps are
+//      inert until myTeamName is set.
 //   3. Update strategy any time:  __draftAgent.setTargets(['Name', ...], ['K','D/ST'])
 //      (ranked, best first; exact ESPN display names — "Broncos D/ST", not
 //      "Denver Broncos". setTargets also re-mirrors the ESPN queue; the
@@ -42,6 +48,12 @@
   const A = (window.__draftAgent = {
     targets: [],          // ranked player display names, best first
     avoidPositions: [],   // e.g. ['K','D/ST','QB'] - skipped by the fallback pick
+    // Hard rail: never draft past these per-position counts, no matter what a
+    // stale list, fallback, or queue entry says. A 16-team rehearsal ended
+    // with 3 QBs via three different paths; judgment composes the list, caps
+    // make it impossible to blow through. Requires myTeamName to count picks.
+    positionCaps: { QB: 2, TE: 2, K: 1, 'D/ST': 1 },
+    myTeamName: '',       // exact fantasy team name as shown in the Picks panel
     log: [],
     wsLog: [],
     picking: false,       // guard so the async pick sequence runs once per turn
@@ -80,6 +92,23 @@
     return (txt.match(/\b(QB|RB|WR|TE|K|D\/ST)\b/) || [])[1] || '';
   };
 
+  // My per-position counts, derived from the pick feed ("Name / TEAM POS
+  // R<n>, P<n> - Team Name" entries matching myTeamName).
+  const myPosCounts = () => {
+    const counts = {};
+    if (!A.myTeamName) return counts;
+    for (const t of window.__seenPicksSet || []) {
+      if (!t.endsWith('- ' + A.myTeamName)) continue;
+      const m = t.match(/\/ \S+ (QB|RB|WR|TE|K|D\/ST)R\d+, P\d+/);
+      if (m) counts[m[1]] = (counts[m[1]] || 0) + 1;
+    }
+    return counts;
+  };
+  const atCap = (pos) => {
+    const cap = A.positionCaps[pos];
+    return cap !== undefined && (myPosCounts()[pos] || 0) >= cap;
+  };
+
   const searchBox = () =>
     document.querySelector('input[placeholder*="Player" i]') ||
     document.querySelector('input[type="search"]');
@@ -99,6 +128,11 @@
     if (!setSearch(name)) return false;
     await sleep(500); // let the filter re-render
     const hit = draftButtons().find((b) => rowName(b) === name);
+    if (hit && atCap(rowPos(hit))) {
+      say('SKIPPED ' + name + ': at ' + rowPos(hit) + ' cap');
+      setSearch('');
+      return false;
+    }
     if (hit) {
       hit.click();
       say('DRAFT clicked: ' + name + ' (target)');
@@ -113,6 +147,7 @@
   const bestVisibleTarget = () => {
     let best = null, bestIx = Infinity;
     for (const b of draftButtons()) {
+      if (atCap(rowPos(b))) continue;
       const ix = A.targets.indexOf(rowName(b));
       if (ix >= 0 && ix < bestIx) { bestIx = ix; best = b; }
     }
@@ -153,8 +188,8 @@
       await sleep(400);
       const btns = draftButtons();
       if (btns.length) {
-        // Fallback: best listed player whose position we aren't avoiding.
-        const pick = btns.find((b) => !A.avoidPositions.includes(rowPos(b))) || btns[0];
+        // Fallback: best listed player whose position we aren't avoiding or capped at.
+        const pick = btns.find((b) => !A.avoidPositions.includes(rowPos(b)) && !atCap(rowPos(b))) || btns[0];
         const name = rowName(pick);
         pick.click();
         say('DRAFT clicked: ' + name + ' (best-available fallback)');
@@ -213,6 +248,7 @@
     onTheClock: [...document.querySelectorAll('div')].find((e) => /^On the Clock/i.test(e.textContent.trim()) && e.children.length === 0)?.textContent || '',
     myTurn: draftButtons().length > 0,
     roster: [...document.querySelectorAll('aside a, [class*=roster] a')].map((a) => a.textContent.trim()).filter(Boolean),
+    myPosCounts: myPosCounts(),
     picksSeen: [...seen],
     targets: A.targets,
     recentLog: A.log.slice(-10),
@@ -225,6 +261,7 @@
   A.setTargets = (list, avoid) => {
     A.targets = list.slice();
     if (avoid) A.avoidPositions = avoid;
+    if (!A.myTeamName) say('WARNING: myTeamName unset - position caps are inert');
     say('targets set (' + A.targets.length + ')');
     setTimeout(() => { A.syncQueue().catch((e) => say('ERR syncQueue: ' + e.message)); }, 500);
     return A.targets.length;
@@ -249,6 +286,7 @@
       const q = [...document.querySelectorAll('button.action-btn')]
         .filter((b) => b.textContent.trim().toUpperCase() === 'QUEUE')
         .find((b) => rowName(b) === name);
+      if (q && atCap(rowPos(q))) { say('not queueing ' + name + ': at ' + rowPos(q) + ' cap'); continue; }
       if (q) { q.click(); say('QUEUED: ' + name); await sleep(300); }
     }
     setSearch('');

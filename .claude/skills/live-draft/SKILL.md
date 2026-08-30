@@ -27,6 +27,12 @@ on reacting in real time. The standing targets list IS your reaction.
 3. Inject the entire contents of `livedraft/agent.js` via javascript_tool.
    Confirm `[AGENT] draft agent installed` in the console. Injecting before
    the draft starts also captures the WebSocket (`__draftAgent.wsLog`).
+   Then set the hard rails — `__draftAgent.myTeamName` (exact name as the
+   Picks panel shows it; verify against the first pick feed entries) and
+   `__draftAgent.positionCaps` (default `{QB: 2, TE: 2, K: 1, 'D/ST': 1}`;
+   set QB to 1 if punting a backup). Caps are enforced at every click point
+   and are what stops a stale list or fallback from drafting a third QB —
+   the 16-team rehearsal did exactly that through three different paths.
 4. Push initial targets (Phase 3 judgment applies from pick one) via
    `__draftAgent.setTargets([...], ['K','D/ST'])` — setTargets re-mirrors the
    ESPN queue automatically; never assign `A.targets` directly.
@@ -80,9 +86,12 @@ The VOR board is your prior, not your answer. Deviate deliberately, and say
 why in your user updates. In order of importance:
 
 **Roster legality first.** Track lineup requirements vs my position counts.
-Reserve the last two rounds for K + D/ST (`avoidPositions` until then). Never
-let the fallback fill a maxed position: keep `avoidPositions` updated with
-positions I'm done with (e.g. QB after 2 in a 1-QB league).
+Reserve the last two rounds for K + D/ST (`avoidPositions` until then), and
+keep `positionCaps` current as strategy evolves — caps are the hard rail, but
+the list itself must also be roster-legal at EVERY point it could be consumed
+from, not just the next pick: a standing list's tail gets drafted too. Never
+leave surplus-position names (extra QBs especially — in a deep league the
+late-round board is mostly QBs) sitting in the tail as "value."
 
 **Tier cliffs beat marginal VOR.** The last player of a positional tier at a
 position I need outranks a slightly-higher-VOR player from a deep tier. The
@@ -109,7 +118,9 @@ downgrade a player merely because you don't recognize the situation; check.
 
 **Bye weeks and stacks are tiebreakers, not drivers.** Break near-ties toward
 bye diversity at RB/WR and away from stacking my QB's bye with both my TE's
-and D/ST's. QB+WR stacks are a mild plus in half-PPR.
+and D/ST's. QB+WR stacks are a mild plus in half-PPR. If drafting a backup
+QB (cap 2), it must have a different bye than QB1 — a same-bye QB2 is worth
+almost nothing.
 
 **The user outranks the model.** Matt may be watching and typing. His
 instructions override the board instantly; restate what you changed so he can
