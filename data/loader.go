@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,9 +24,13 @@ const borisBase = "https://s3-us-west-1.amazonaws.com/fftiers/out/"
 type League struct {
 	Key         string
 	DisplayName string
-	BorisALL    string
+	BorisALL    string            // combined board, used by the classic path
+	BorisPos    map[string]string // per-position tier files for the VOR path
+	BorisDST    string
 	BorisK      string
 	Teams       int
+	Lineup      Lineup
+	Scoring     Scoring
 }
 
 var Leagues = map[string]League{
@@ -31,15 +38,44 @@ var Leagues = map[string]League{
 		Key:         "fnf",
 		DisplayName: "Friends, Fiends n Family (Standard, 10tm)",
 		BorisALL:    borisBase + "weekly-ALL.csv",
-		BorisK:      borisBase + "weekly-K.csv",
-		Teams:       10,
+		BorisPos: map[string]string{
+			"QB": borisBase + "weekly-QB.csv",
+			"RB": borisBase + "weekly-RB.csv",
+			"WR": borisBase + "weekly-WR.csv",
+			"TE": borisBase + "weekly-TE.csv",
+		},
+		BorisDST: borisBase + "weekly-DST.csv",
+		BorisK:   borisBase + "weekly-K.csv",
+		Teams:    10,
+		Lineup:   Lineup{QB: 1, RB: 2, WR: 2, TE: 1, Flex: 2},
+		Scoring: Scoring{
+			PassYd: 0.04, PassTD: 4, Int: -2,
+			RushYd: 0.1, RushTD: 6,
+			Rec: 0, RecYd: 0.1, RecTD: 6,
+			FumLost:  -2,
+			Bonus100: 1, Bonus200: 1, Pass400: 1,
+		},
 	},
 	"other": {
 		Key:         "other",
 		DisplayName: "the-other-ff (Half PPR, 16tm)",
 		BorisALL:    borisBase + "weekly-ALL-HALF-PPR.csv",
-		BorisK:      borisBase + "weekly-K.csv",
-		Teams:       16,
+		BorisPos: map[string]string{
+			"QB": borisBase + "weekly-QB.csv",
+			"RB": borisBase + "weekly-RB-HALF.csv",
+			"WR": borisBase + "weekly-WR-HALF.csv",
+			"TE": borisBase + "weekly-TE-HALF.csv",
+		},
+		BorisDST: borisBase + "weekly-DST.csv",
+		BorisK:   borisBase + "weekly-K.csv",
+		Teams:    16,
+		Lineup:   Lineup{QB: 1, RB: 2, WR: 2, TE: 1, Flex: 1},
+		Scoring: Scoring{
+			PassYd: 0.04, PassTD: 4, Int: -2,
+			RushYd: 0.1, RushTD: 6,
+			Rec: 0.5, RecYd: 0.1, RecTD: 6,
+			FumLost: -2,
+		},
 	},
 }
 
@@ -104,6 +140,19 @@ func fetchWithCache(url, cacheName string, headers map[string]string, offline bo
 	return data, nil
 }
 
+func fetchBoris(fileURL string, offline bool) ([]borisRow, error) {
+	u, _ := url.Parse(fileURL)
+	data, err := fetchWithCache(fileURL, path.Base(u.Path), nil, offline)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path.Base(u.Path), err)
+	}
+	rows, err := parseBorisCSV(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path.Base(u.Path), err)
+	}
+	return rows, nil
+}
+
 type borisRow struct {
 	Rank     int
 	Name     string
@@ -112,8 +161,8 @@ type borisRow struct {
 	AvgRank  float64
 }
 
-// parseBorisCSV maps columns by header name since the K file uses a
-// different column order than the ALL file.
+// parseBorisCSV maps columns by header name since the per-position files use
+// a different column order than the ALL file.
 func parseBorisCSV(data []byte) ([]borisRow, error) {
 	r := csv.NewReader(bytes.NewReader(data))
 	records, err := r.ReadAll()
@@ -155,6 +204,7 @@ type espnInfo struct {
 	Team string
 	Bye  int
 	ADP  float64
+	Proj *ProjStats
 }
 
 type espnPlayerResp struct {
@@ -166,6 +216,10 @@ type espnPlayerResp struct {
 			Ownership         struct {
 				AverageDraftPosition float64 `json:"averageDraftPosition"`
 			} `json:"ownership"`
+			Stats []struct {
+				ID    string             `json:"id"`
+				Stats map[string]float64 `json:"stats"`
+			} `json:"stats"`
 		} `json:"player"`
 	} `json:"players"`
 }
@@ -184,8 +238,24 @@ var espnPositions = map[int]string{1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 1
 
 const season = "2026"
 
+// ESPN season-projection stat ids (verified against the 2026 feed).
+func projFromStats(m map[string]float64) *ProjStats {
+	return &ProjStats{
+		PassYds:    m["3"],
+		PassTDs:    m["4"],
+		Ints:       m["20"],
+		RushYds:    m["24"],
+		RushTDs:    m["25"],
+		RecYds:     m["42"],
+		RecTDs:     m["43"],
+		Receptions: m["53"],
+		FumLost:    m["72"],
+		Games:      m["210"],
+	}
+}
+
 // loadESPN returns lookup maps from normalized player name (and a
-// last-name+position fallback key) to ESPN team/bye/ADP info.
+// last-name+position fallback key) to ESPN team/bye/ADP/projection info.
 func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]espnInfo, err error) {
 	schedData, err := fetchWithCache(
 		"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"+season+"?view=proTeamSchedules_wl",
@@ -227,6 +297,12 @@ func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]esp
 			Team: teamAbbrev[p.Player.ProTeamID],
 			Bye:  teamBye[p.Player.ProTeamID],
 			ADP:  p.Player.Ownership.AverageDraftPosition,
+		}
+		for _, s := range p.Player.Stats {
+			if s.ID == "10"+season && len(s.Stats) > 0 {
+				info.Proj = projFromStats(s.Stats)
+				break
+			}
 		}
 		if pos == "DST" {
 			// ESPN name is like "Texans D/ST"; key off the nickname.
@@ -284,16 +360,33 @@ func lookupESPN(byName map[string]espnInfo, byLast map[string][]espnInfo, name, 
 	return espnInfo{}, false
 }
 
-// LoadPlayers builds the draft board for a league: Boris Chen tiers merged
-// with ESPN team/bye/ADP. Kickers come from a separate Boris file with their
-// own 1..N tiers, so they are shifted to align with the bottom of the
-// overall board and ranked after everyone else.
-func LoadPlayers(league League, offline bool) ([]model.Player, error) {
-	allData, err := fetchWithCache(league.BorisALL, league.Key+"-tiers.csv", nil, offline)
-	if err != nil {
-		return nil, fmt.Errorf("boris tiers: %w", err)
+// LoadPlayers builds the draft board. The default (VOR) path keeps Boris
+// Chen's per-position tiers and ordering as-is, but builds the cross-position
+// interleave from league-exact projected value over replacement. The classic
+// path reproduces Boris's combined board directly. If ESPN projections are
+// unavailable the VOR path falls back to classic.
+func LoadPlayers(league League, offline, classic bool) ([]model.Player, error) {
+	byName, byLast, espnErr := loadESPN(offline)
+	if espnErr != nil {
+		byName, byLast = map[string]espnInfo{}, map[string][]espnInfo{}
 	}
-	allRows, err := parseBorisCSV(allData)
+
+	if !classic && espnErr == nil {
+		players, err := loadVORBoard(league, offline, byName, byLast)
+		if err == nil {
+			return players, nil
+		}
+		fmt.Fprintf(os.Stderr, "warning: VOR board failed (%v); falling back to classic board\n", err)
+	} else if !classic {
+		fmt.Fprintf(os.Stderr, "warning: ESPN data unavailable (%v); falling back to classic board\n", espnErr)
+	}
+
+	return loadClassicBoard(league, offline, byName, byLast)
+}
+
+// loadClassicBoard is Boris's combined ALL board plus his kicker file.
+func loadClassicBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]espnInfo) ([]model.Player, error) {
+	allRows, err := fetchBoris(league.BorisALL, offline)
 	if err != nil {
 		return nil, fmt.Errorf("boris tiers: %w", err)
 	}
@@ -307,11 +400,7 @@ func LoadPlayers(league League, offline bool) ([]model.Player, error) {
 	}
 	allRows = filtered
 
-	kData, err := fetchWithCache(league.BorisK, "k-tiers.csv", nil, offline)
-	if err != nil {
-		return nil, fmt.Errorf("boris kicker tiers: %w", err)
-	}
-	kRows, err := parseBorisCSV(kData)
+	kRows, err := fetchBoris(league.BorisK, offline)
 	if err != nil {
 		return nil, fmt.Errorf("boris kicker tiers: %w", err)
 	}
@@ -340,17 +429,12 @@ func LoadPlayers(league League, offline bool) ([]model.Player, error) {
 		kRows[i].Rank += maxRank
 	}
 
-	byName, byLast, err := loadESPN(offline)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: ESPN data unavailable (%v); ADP/team/bye will be blank\n", err)
-		byName, byLast = map[string]espnInfo{}, map[string][]espnInfo{}
-	}
-
 	var players []model.Player
 	for _, r := range append(allRows, kRows...) {
 		info, _ := lookupESPN(byName, byLast, r.Name, r.Position)
 		players = append(players, model.Player{
 			Tier:     r.Tier,
+			PosTier:  r.Tier,
 			Rank:     r.Rank,
 			Name:     r.Name,
 			Team:     info.Team,
@@ -358,6 +442,138 @@ func LoadPlayers(league League, offline bool) ([]model.Player, error) {
 			ByeWeek:  info.Bye,
 			ADP:      info.ADP,
 		})
+	}
+	return players, nil
+}
+
+var skillPositions = []string{"QB", "RB", "WR", "TE"}
+
+// loadVORBoard assembles the league-adjusted board:
+//  1. Boris per-position files fix each position's internal order and tiers.
+//  2. ESPN projections scored with the league's exact rules give points;
+//     VOR = points - replacement level from the league's actual lineup.
+//  3. Within each position the sorted VOR values are assigned to Boris's
+//     order (projections set the value curve, Boris sets the order).
+//  4. Positions interleave by assigned VOR; display tiers come from optimal
+//     1-D clustering of those values. DST and K sit below the skill board.
+func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]espnInfo) ([]model.Player, error) {
+	type boardPlayer struct {
+		row  borisRow
+		info espnInfo
+		ok   bool
+		vor  float64
+	}
+
+	posPlayers := map[string][]boardPlayer{}
+	pointsByPos := map[string][]float64{}
+	for _, pos := range skillPositions {
+		rows, err := fetchBoris(league.BorisPos[pos], offline)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
+		for _, r := range rows {
+			info, ok := lookupESPN(byName, byLast, r.Name, pos)
+			posPlayers[pos] = append(posPlayers[pos], boardPlayer{row: r, info: info, ok: ok})
+		}
+	}
+
+	// League-exact points for every projected ESPN player at the position
+	// (not just Boris-ranked ones) so replacement levels are well estimated.
+	for key, info := range byName {
+		if info.Proj == nil {
+			continue
+		}
+		pos := strings.SplitN(key, ":", 2)[0]
+		for _, sp := range skillPositions {
+			if pos == sp {
+				pointsByPos[pos] = append(pointsByPos[pos], LeaguePoints(*info.Proj, league.Scoring))
+			}
+		}
+	}
+	repl := ReplacementLevels(pointsByPos, league.Lineup, league.Teams)
+
+	// Isotonic assignment: sorted VOR values meet Boris's order.
+	for pos, players := range posPlayers {
+		var vors []float64
+		for _, p := range players {
+			if p.ok && p.info.Proj != nil {
+				vors = append(vors, LeaguePoints(*p.info.Proj, league.Scoring)-repl[pos])
+			}
+		}
+		if len(vors) == 0 {
+			return nil, fmt.Errorf("no projections matched for %s", pos)
+		}
+		sort.Sort(sort.Reverse(sort.Float64Slice(vors)))
+		// Players beyond the matched pool extend the curve downward.
+		for len(vors) < len(players) {
+			vors = append(vors, vors[len(vors)-1]-0.5)
+		}
+		for i := range players {
+			players[i].vor = vors[i]
+		}
+		posPlayers[pos] = players
+	}
+
+	var board []boardPlayer
+	for _, pos := range skillPositions {
+		board = append(board, posPlayers[pos]...)
+	}
+	sort.SliceStable(board, func(i, j int) bool { return board[i].vor > board[j].vor })
+
+	vals := make([]float64, len(board))
+	for i, p := range board {
+		vals[i] = p.vor
+	}
+	tiers := ClusterDesc(vals, BoardTiers(len(vals)))
+
+	var players []model.Player
+	for i, p := range board {
+		players = append(players, model.Player{
+			Tier:     tiers[i],
+			PosTier:  p.row.Tier,
+			Rank:     i + 1,
+			Name:     p.row.Name,
+			Team:     p.info.Team,
+			Position: model.Position(p.row.Position),
+			ByeWeek:  p.info.Bye,
+			ADP:      p.info.ADP,
+			VOR:      p.vor,
+		})
+	}
+
+	// DST then K below the skill board, keeping their own Boris tier shapes.
+	maxTier, rank := 0, len(players)
+	for _, p := range players {
+		if p.Tier > maxTier {
+			maxTier = p.Tier
+		}
+	}
+	for _, unit := range []string{league.BorisDST, league.BorisK} {
+		rows, err := fetchBoris(unit, offline)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
+		unitMaxTier := 0
+		for _, r := range rows {
+			rank++
+			info, _ := lookupESPN(byName, byLast, r.Name, r.Position)
+			players = append(players, model.Player{
+				Tier:     maxTier + r.Tier,
+				PosTier:  r.Tier,
+				Rank:     rank,
+				Name:     r.Name,
+				Team:     info.Team,
+				Position: model.Position(r.Position),
+				ByeWeek:  info.Bye,
+				ADP:      info.ADP,
+			})
+			if maxTier+r.Tier > unitMaxTier {
+				unitMaxTier = maxTier + r.Tier
+			}
+		}
+		maxTier = unitMaxTier
 	}
 	return players, nil
 }

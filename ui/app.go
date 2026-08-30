@@ -25,9 +25,9 @@ type Model struct {
 	ctrlDPressed bool
 }
 
-func NewModel(resetState bool, league data.League, offline bool) (Model, error) {
+func NewModel(resetState bool, league data.League, offline, classic bool) (Model, error) {
 	model.StateLeagueKey = league.Key
-	players, err := data.LoadPlayers(league, offline)
+	players, err := data.LoadPlayers(league, offline, classic)
 	if err != nil {
 		return Model{}, err
 	}
@@ -337,8 +337,8 @@ func (m Model) renderTable() string {
 
 	// Table header
 	header := tableHeaderStyle.Render(
-		fmt.Sprintf("%-4s %-4s %-20s %-4s %-4s %-4s %-6s %-8s",
-			"Tier", "Rank", "Player", "Team", "Pos", "Bye", "ADP", "Status"),
+		fmt.Sprintf("%-4s %-4s %-20s %-4s %-4s %-4s %-6s %-6s %-8s",
+			"Tier", "Rank", "Player", "Team", "Pos", "Bye", "ADP", "VOR", "Status"),
 	)
 
 	var rows []string
@@ -378,14 +378,24 @@ func (m Model) renderTable() string {
 		if player.ADP > 0 {
 			adp = fmt.Sprintf("%.1f", player.ADP)
 		}
-		row := fmt.Sprintf("%-4d %-4d %-20s %-4s %-4s %-4s %-6s %-8s",
-			player.Tier,
+		vor := "-"
+		if player.VOR != 0 {
+			vor = fmt.Sprintf("%.0f", player.VOR)
+		}
+		// Position-filtered views show Boris's finer per-position tier.
+		tier := player.Tier
+		if m.positions[m.activePos] != model.ALL && player.PosTier > 0 {
+			tier = player.PosTier
+		}
+		row := fmt.Sprintf("%-4d %-4d %-20s %-4s %-4s %-4s %-6s %-6s %-8s",
+			tier,
 			player.Rank,
 			truncateString(player.Name, 20),
 			player.Team,
 			string(player.Position),
 			bye,
 			adp,
+			vor,
 			status,
 		)
 
@@ -416,8 +426,8 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-func Run(resetState bool, league data.League, offline bool) error {
-	m, err := NewModel(resetState, league, offline)
+func Run(resetState bool, league data.League, offline, classic bool) error {
+	m, err := NewModel(resetState, league, offline, classic)
 	if err != nil {
 		return err
 	}

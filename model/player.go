@@ -15,13 +15,15 @@ const (
 )
 
 type Player struct {
-	Tier     int
+	Tier     int // global board tier (VOR-clustered in vor mode, Boris ALL tier in classic)
+	PosTier  int // Boris's tier within the player's position
 	Rank     int
 	Name     string
 	Team     string
 	Position Position
 	ByeWeek  int
 	ADP      float64
+	VOR      float64 // league-adjusted value over replacement (0 when unavailable)
 	Drafted  bool
 }
 
