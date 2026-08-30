@@ -158,3 +158,14 @@ give you minutes between your picks); a whole positional tier can vanish in
 ONE 16-team round (ten WR/TEs went in round 5); K/D/ST runs start around
 round 7 in deep leagues; and the ESPN queue mirror is what saves the turns
 you lose — keep it synced via setTargets, always.
+
+Fresh-context mock (10-team fnf, 2026-08-30): a "Practice Draft" room can
+START THE CLOCK the moment you join — inject and configure before joining,
+or expect ESPN to autopick your early turns. And smoke-test the caps right
+after injection: run rowPos on a live row (or confirm a SKIPPED /
+"not queueing" log) before trusting them. That mock's row markup
+concatenated cell text with no whitespace, the \b-anchored position regex
+returned '' on every row, every atCap() silently no-oped, and the roster
+ended with FOUR QBs under a QB:1 cap. rowPos now reads
+.playerinfo__playerpos (fix in agent.js) — but a selector that breaks
+silently disarms every hard rail, so verify, don't assume.

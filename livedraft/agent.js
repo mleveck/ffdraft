@@ -90,8 +90,18 @@
     );
   const rowName = (btn) =>
     btn.closest('.fixedDataTableCellGroupLayout_cellGroup')?.querySelector('a')?.textContent.trim() || '';
+  // Position comes from the dedicated playerinfo element. The old
+  // \b-anchored regex over the row's textContent silently returned '' in the
+  // 2026-08-30 practice room: FixedDataTable concatenates cell text with no
+  // whitespace ("Ja'Marr ChaseQCINWRFourth and Long Shot..."), so \bWR\b
+  // never matches, every atCap() check no-ops, and the fallback ladder
+  // degrades to btns[0] — that room ended with FOUR QBs under a QB:1 cap.
   const rowPos = (btn) => {
-    const txt = btn.closest('.fixedDataTableCellGroupLayout_cellGroup')?.textContent || '';
+    const g = btn.closest('.fixedDataTableCellGroupLayout_cellGroup');
+    const el = g?.querySelector('.playerinfo__playerpos, [class*="playerpos"]');
+    // Two-way players render as "WR, CB"/"WRCB" — keep the leading token.
+    if (el) return (el.textContent.trim().match(/^(QB|RB|WR|TE|K|D\/ST)/) || [])[1] || '';
+    const txt = g?.textContent || '';
     return (txt.match(/\b(QB|RB|WR|TE|K|D\/ST)\b/) || [])[1] || '';
   };
 
