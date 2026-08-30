@@ -14,6 +14,7 @@ import (
 
 type Model struct {
 	draft        *model.Draft
+	leagueName   string
 	cursor       int
 	searchBox    textinput.Model
 	width        int
@@ -24,9 +25,13 @@ type Model struct {
 	ctrlDPressed bool
 }
 
-func NewModel(resetState bool) Model {
-	players := data.GetUpdatedPlayersNew()
-	draft := model.NewDraft(players, 10)
+func NewModel(resetState bool, league data.League, offline bool) (Model, error) {
+	model.StateLeagueKey = league.Key
+	players, err := data.LoadPlayers(league, offline)
+	if err != nil {
+		return Model{}, err
+	}
+	draft := model.NewDraft(players, league.Teams)
 
 	// Load saved state unless we're resetting
 	if !resetState {
@@ -50,13 +55,14 @@ func NewModel(resetState bool) Model {
 
 	return Model{
 		draft:        draft,
+		leagueName:   league.DisplayName,
 		cursor:       0,
 		searchBox:    search,
 		positions:    positions,
 		activePos:    0,
 		lastKey:      "",
 		ctrlDPressed: false,
-	}
+	}, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -74,7 +80,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Handle special keys first
 		keyStr := msg.String()
-		
+
 		switch keyStr {
 		case "q":
 			// Handle qq sequence for clearing search
@@ -91,7 +97,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastKey = "q"
 				return m, nil
 			}
-			
+
 		case "ctrl+d":
 			// Handle ctrl+d twice to exit
 			if m.ctrlDPressed {
@@ -223,7 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastKey = ""
 			m.ctrlDPressed = false
 			return m, nil
-		
+
 		default:
 			// Reset key tracking for any other key
 			m.lastKey = ""
@@ -293,7 +299,7 @@ func (m Model) View() string {
 	var sections []string
 
 	// Header
-	title := fmt.Sprintf("FF Draft - Round %d, Pick %d", m.draft.CurrentRound, m.draft.CurrentPick)
+	title := fmt.Sprintf("FF Draft [%s] - Round %d, Pick %d", m.leagueName, m.draft.CurrentRound, m.draft.CurrentPick)
 	sections = append(sections, headerStyle.Render(title))
 
 	// Position tabs
@@ -364,14 +370,22 @@ func (m Model) renderTable() string {
 			status = "DRAFTED"
 		}
 
-		row := fmt.Sprintf("%-4d %-4d %-20s %-4s %-4s %-4d %-6.1f %-8s",
+		bye := "-"
+		if player.ByeWeek > 0 {
+			bye = fmt.Sprintf("%d", player.ByeWeek)
+		}
+		adp := "-"
+		if player.ADP > 0 {
+			adp = fmt.Sprintf("%.1f", player.ADP)
+		}
+		row := fmt.Sprintf("%-4d %-4d %-20s %-4s %-4s %-4s %-6s %-8s",
 			player.Tier,
 			player.Rank,
 			truncateString(player.Name, 20),
 			player.Team,
 			string(player.Position),
-			player.ByeWeek,
-			player.ADP,
+			bye,
+			adp,
 			status,
 		)
 
@@ -402,9 +416,12 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-func Run(resetState bool) error {
-	m := NewModel(resetState)
+func Run(resetState bool, league data.League, offline bool) error {
+	m, err := NewModel(resetState, league, offline)
+	if err != nil {
+		return err
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }

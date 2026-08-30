@@ -51,6 +51,6 @@ func SortPlayersByTierAndADP(players []Player) {
 		if players[i].Drafted != players[j].Drafted {
 			return !players[i].Drafted
 		}
-		return players[i].ADP < players[j].ADP
+		return players[i].Rank < players[j].Rank
 	})
 }

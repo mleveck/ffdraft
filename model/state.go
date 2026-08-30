@@ -13,12 +13,15 @@ type DraftState struct {
 	TotalTeams     int             `json:"total_teams"`
 }
 
+// StateLeagueKey scopes the saved state file so each league keeps its own draft.
+var StateLeagueKey = "default"
+
 func getStateFilePath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(homeDir, ".ffdraft_state.json"), nil
+	return filepath.Join(homeDir, ".ffdraft_state_"+StateLeagueKey+".json"), nil
 }
 
 func SaveDraftState(state DraftState) error {
@@ -37,7 +40,7 @@ func SaveDraftState(state DraftState) error {
 
 func LoadDraftState() (DraftState, error) {
 	var state DraftState
-	
+
 	stateFile, err := getStateFilePath()
 	if err != nil {
 		return state, err
