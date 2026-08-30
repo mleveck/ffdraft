@@ -86,7 +86,17 @@ The VOR board is your prior, not your answer. Deviate deliberately, and say
 why in your user updates. In order of importance:
 
 **Roster legality first.** Track lineup requirements vs my position counts.
-Reserve the last two rounds for K + D/ST (`avoidPositions` until then), and
+K + D/ST timing is league-size dependent, not a fixed rule. In a 10-12 team
+league the wire is full of them all season, so the last two rounds are
+correct. In a 16-team league every K/D/ST slot in the league gets filled and
+streaming dies — replacement collapses — while the late-round alternatives
+are flat-VOR flyers, so taking them 2-4 rounds from the end is cheap
+insurance against the dregs. Don't fix the round: watch the run in the pick
+feed (the rehearsal room started its K run in round 7) and act before only
+dregs remain. D/ST before K (pass-rush quality persists year to year;
+kicker stats mostly don't — you're avoiding K15, not chasing K1; the board
+doesn't value-model either position, so this is pure judgment). Keep both in
+`avoidPositions` until that window opens, and
 keep `positionCaps` current as strategy evolves — caps are the hard rail, but
 the list itself must also be roster-legal at EVERY point it could be consumed
 from, not just the next pick: a standing list's tail gets drafted too. Never
