@@ -184,6 +184,18 @@ target list. Validated end-to-end in a full 17-round ESPN practice draft
 (2026-08-30); see the header comment in the file for usage and the DOM
 gotchas it works around.
 
+The bridge back into this tool is a set of CLI flags (see `bridge.go`):
+`-mark`/`-mine`/`-unmark` sync observed picks into the same per-league state
+file the TUI uses (fuzzy name matching, D/ST nicknames, suggestions for
+ambiguous inputs), and `-status`/`-targets N` emit the current
+league-adjusted board as JSON. `~/.ffdraft_live_<league>.json` additionally
+tracks which picks are mine. Don't run the bridge and the TUI at the same
+time; both rewrite the state file.
+
+The whole operation — setup, sync loop, judgment guidance, failure handling —
+is encoded as a project skill: `/live-draft [league] [my team name]`
+(`.claude/skills/live-draft/SKILL.md`).
+
 ## Known limitations
 
 - ESPN projections are a single source; projection error flows into the
