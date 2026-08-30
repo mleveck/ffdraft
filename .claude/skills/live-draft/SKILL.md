@@ -143,6 +143,14 @@ against ESPN auto teams with a 30s clock — the harshest timing environment.
 A full rehearsal (all phases, real bridge syncs) is the best preflight; the
 practice draft does not touch the real league.
 
+Live-fire addendum (10-team fnf, 2026-08-30, all fixes in agent.js): decide
+caps BEFORE the draft and push them with the very first setTargets — a
+"refine caps later" plan lost the race twice (RB ran to 7, QB to 2 in a
+league where QB2 is worthless; in a 10-teamer set QB: 1 as soon as QB1 is
+rostered, and cap RB around 5). In an all-auto room, push the entire endgame
+plan (D/ST + K + flyers, in order) by round ~11 rather than reshaping
+per-pick — reshaping cycles lose to a 40s round.
+
 Rehearsal history (16-team, 2026-08-30): 15/15 legal roster, zero unmatched
 names across 240 picks. What it taught, now encoded above: all-auto rooms hit
 1-2s/pick in late rounds (a real draft never does — humans plus a 30s+ clock

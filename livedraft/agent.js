@@ -45,9 +45,12 @@
 (() => {
   if (window.__draftAgent) window.__draftAgent.stop();
 
+  // A re-injection (bug fix mid-draft, page reload) inherits the previous
+  // instance's plan so there is no unprotected window with empty targets.
+  const prev = window.__draftAgentCfg || {};
   const A = (window.__draftAgent = {
-    targets: [],          // ranked player display names, best first
-    avoidPositions: [],   // e.g. ['K','D/ST','QB'] - skipped by the fallback pick
+    targets: prev.targets || [],   // ranked player display names, best first
+    avoidPositions: prev.avoid || [], // e.g. ['K','D/ST','QB'] - skipped by the fallback pick
     // Hard rail: never draft past these per-position counts, no matter what a
     // stale list, fallback, or queue entry says. A 16-team rehearsal ended
     // with 3 QBs via three different paths; judgment composes the list, caps
@@ -92,15 +95,23 @@
     return (txt.match(/\b(QB|RB|WR|TE|K|D\/ST)\b/) || [])[1] || '';
   };
 
-  // My per-position counts, derived from the pick feed ("Name / TEAM POS
-  // R<n>, P<n> - Team Name" entries matching myTeamName).
+  // Strict single-pick entry: "Name / TEAM POS R<n>, P<n> - Team Name".
+  // The Picks panel also renders container elements whose text concatenates
+  // several picks; those double-counted positions in live fire (RB:5 after
+  // two picks) until entries were parsed strictly and deduped by pick slot.
+  const PICK_RE = /^([^\/]+) \/ (\S+) (QB|RB|WR|TE|K|D\/ST)R(\d+), P(\d+) - (.+)$/;
+
+  // My per-position counts, derived from the pick feed.
   const myPosCounts = () => {
-    const counts = {};
+    const counts = {}, slots = new Set();
     if (!A.myTeamName) return counts;
     for (const t of window.__seenPicksSet || []) {
-      if (!t.endsWith('- ' + A.myTeamName)) continue;
-      const m = t.match(/\/ \S+ (QB|RB|WR|TE|K|D\/ST)R\d+, P\d+/);
-      if (m) counts[m[1]] = (counts[m[1]] || 0) + 1;
+      const m = t.match(PICK_RE);
+      if (!m || m[6] !== A.myTeamName) continue;
+      const slot = m[4] + '-' + m[5];
+      if (slots.has(slot)) continue;
+      slots.add(slot);
+      counts[m[3]] = (counts[m[3]] || 0) + 1;
     }
     return counts;
   };
@@ -126,7 +137,7 @@
   // --- Picking --------------------------------------------------------------
   const tryDraftExact = async (name) => {
     if (!setSearch(name)) return false;
-    await sleep(500); // let the filter re-render
+    await sleep(350); // let the filter re-render
     const hit = draftButtons().find((b) => rowName(b) === name);
     if (hit && atCap(rowPos(hit))) {
       say('SKIPPED ' + name + ': at ' + rowPos(hit) + ' cap');
@@ -160,7 +171,9 @@
   // budget, and past the budget take the best visible target or fallback.
   const pickSequence = async () => {
     A.picking = true;
-    const deadline = Date.now() + 8000;
+    // 15s of a 30s clock: live fire showed 8s expiring inside a long dead-name
+    // walk before the list reached the positions the pick actually needed.
+    const deadline = Date.now() + 15000;
     try {
       let { best, bestIx } = bestVisibleTarget();
       if (best && bestIx < 3) {
@@ -188,8 +201,14 @@
       await sleep(400);
       const btns = draftButtons();
       if (btns.length) {
-        // Fallback: best listed player whose position we aren't avoiding or capped at.
-        const pick = btns.find((b) => !A.avoidPositions.includes(rowPos(b)) && !atCap(rowPos(b))) || btns[0];
+        // Fallback ladder: best visible player not avoided or capped; then
+        // merely not capped (caps outrank avoid); only then anything at all —
+        // a live-fire pick blew through the RB cap because the last resort
+        // ignored it while every visible row happened to be capped/avoided.
+        const pick =
+          btns.find((b) => !A.avoidPositions.includes(rowPos(b)) && !atCap(rowPos(b))) ||
+          btns.find((b) => !atCap(rowPos(b))) ||
+          btns[0];
         const name = rowName(pick);
         pick.click();
         say('DRAFT clicked: ' + name + ' (best-available fallback)');
@@ -229,6 +248,7 @@
           .filter((e) => e.children.length <= 3 && /R\d+, P\d+ - /.test(e.textContent) && e.textContent.length < 120)
           .forEach((el) => {
             const txt = el.textContent.replace(/\s+/g, ' ').trim();
+            if (!PICK_RE.test(txt)) return; // strict entries only - no panel concats
             if (!seen.has(txt)) {
               seen.add(txt);
               console.log('[PICK] ' + txt);
@@ -249,7 +269,7 @@
     myTurn: draftButtons().length > 0,
     roster: [...document.querySelectorAll('aside a, [class*=roster] a')].map((a) => a.textContent.trim()).filter(Boolean),
     myPosCounts: myPosCounts(),
-    picksSeen: [...seen],
+    picksSeen: [...seen].filter((t) => PICK_RE.test(t)),
     targets: A.targets,
     recentLog: A.log.slice(-10),
   });
@@ -261,6 +281,7 @@
   A.setTargets = (list, avoid) => {
     A.targets = list.slice();
     if (avoid) A.avoidPositions = avoid;
+    window.__draftAgentCfg = { targets: A.targets, avoid: A.avoidPositions };
     if (!A.myTeamName) say('WARNING: myTeamName unset - position caps are inert');
     say('targets set (' + A.targets.length + ')');
     setTimeout(() => { A.syncQueue().catch((e) => say('ERR syncQueue: ' + e.message)); }, 500);
