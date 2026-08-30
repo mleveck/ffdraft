@@ -201,6 +201,7 @@ func parseBorisCSV(data []byte) ([]borisRow, error) {
 }
 
 type espnInfo struct {
+	Name string
 	Team string
 	Bye  int
 	ADP  float64
@@ -254,9 +255,10 @@ func projFromStats(m map[string]float64) *ProjStats {
 	}
 }
 
-// loadESPN returns lookup maps from normalized player name (and a
-// last-name+position fallback key) to ESPN team/bye/ADP/projection info.
-func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]espnInfo, err error) {
+// loadESPN returns a lookup map from normalized player name to ESPN
+// team/bye/ADP/projection info, plus a last-name+position fallback index of
+// keys into that map.
+func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]string, err error) {
 	schedData, err := fetchWithCache(
 		"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/"+season+"?view=proTeamSchedules_wl",
 		"espn-teams.json", nil, offline)
@@ -289,13 +291,14 @@ func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]esp
 	}
 
 	byName = map[string]espnInfo{}
-	byLast = map[string][]espnInfo{}
+	byLast = map[string][]string{}
 	for _, p := range resp.Players {
 		pos, ok := espnPositions[p.Player.DefaultPositionID]
 		if !ok {
 			continue
 		}
 		info := espnInfo{
+			Name: p.Player.FullName,
 			Team: teamAbbrev[p.Player.ProTeamID],
 			Bye:  teamBye[p.Player.ProTeamID],
 			ADP:  p.Player.Ownership.AverageDraftPosition,
@@ -312,11 +315,12 @@ func loadESPN(offline bool) (byName map[string]espnInfo, byLast map[string][]esp
 			byName["dst:"+nick] = info
 			continue
 		}
-		byName[pos+":"+normalizeName(p.Player.FullName)] = info
+		key := pos + ":" + normalizeName(p.Player.FullName)
+		byName[key] = info
 		words := strings.Fields(normalizeName(p.Player.FullName))
 		if len(words) > 1 {
 			last := words[len(words)-1]
-			byLast[pos+":"+last] = append(byLast[pos+":"+last], info)
+			byLast[pos+":"+last] = append(byLast[pos+":"+last], key)
 		}
 	}
 	return byName, byLast, nil
@@ -338,28 +342,31 @@ func normalizeName(name string) string {
 	return strings.Join(words, " ")
 }
 
-func lookupESPN(byName map[string]espnInfo, byLast map[string][]espnInfo, name, pos string) (espnInfo, bool) {
+// lookupESPN resolves a Boris player name to its ESPN entry, returning the
+// byName key of the match so callers can track which entries were consumed.
+func lookupESPN(byName map[string]espnInfo, byLast map[string][]string, name, pos string) (espnInfo, string, bool) {
 	if pos == "DST" {
 		words := strings.Fields(strings.ToLower(name))
 		if len(words) > 0 {
-			if info, ok := byName["dst:"+words[len(words)-1]]; ok {
-				return info, true
+			key := "dst:" + words[len(words)-1]
+			if info, ok := byName[key]; ok {
+				return info, key, true
 			}
 		}
-		return espnInfo{}, false
+		return espnInfo{}, "", false
 	}
-	norm := normalizeName(name)
-	if info, ok := byName[pos+":"+norm]; ok {
-		return info, true
+	key := pos + ":" + normalizeName(name)
+	if info, ok := byName[key]; ok {
+		return info, key, true
 	}
 	// Fallback: unique last name within position (catches Chig/Chigoziem etc).
-	words := strings.Fields(norm)
+	words := strings.Fields(normalizeName(name))
 	if len(words) > 1 {
-		if matches := byLast[pos+":"+words[len(words)-1]]; len(matches) == 1 {
-			return matches[0], true
+		if keys := byLast[pos+":"+words[len(words)-1]]; len(keys) == 1 {
+			return byName[keys[0]], keys[0], true
 		}
 	}
-	return espnInfo{}, false
+	return espnInfo{}, "", false
 }
 
 // LoadPlayers builds the draft board. The default (VOR) path keeps Boris
@@ -370,7 +377,7 @@ func lookupESPN(byName map[string]espnInfo, byLast map[string][]espnInfo, name, 
 func LoadPlayers(league League, offline, classic bool) ([]model.Player, error) {
 	byName, byLast, espnErr := loadESPN(offline)
 	if espnErr != nil {
-		byName, byLast = map[string]espnInfo{}, map[string][]espnInfo{}
+		byName, byLast = map[string]espnInfo{}, map[string][]string{}
 	}
 
 	if !classic && espnErr == nil {
@@ -387,7 +394,7 @@ func LoadPlayers(league League, offline, classic bool) ([]model.Player, error) {
 }
 
 // loadClassicBoard is Boris's combined ALL board plus his kicker file.
-func loadClassicBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]espnInfo) ([]model.Player, error) {
+func loadClassicBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]string) ([]model.Player, error) {
 	allRows, err := fetchBoris(league.BorisALL, offline)
 	if err != nil {
 		return nil, fmt.Errorf("boris tiers: %w", err)
@@ -433,7 +440,7 @@ func loadClassicBoard(league League, offline bool, byName map[string]espnInfo, b
 
 	var players []model.Player
 	for _, r := range append(allRows, kRows...) {
-		info, _ := lookupESPN(byName, byLast, r.Name, r.Position)
+		info, _, _ := lookupESPN(byName, byLast, r.Name, r.Position)
 		players = append(players, model.Player{
 			Tier:     r.Tier,
 			PosTier:  r.Tier,
@@ -458,13 +465,19 @@ var skillPositions = []string{"QB", "RB", "WR", "TE"}
 //     order (projections set the value curve, Boris sets the order).
 //  4. Positions interleave by assigned VOR; display tiers come from optimal
 //     1-D clustering of those values. DST and K sit below the skill board.
-func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]espnInfo) ([]model.Player, error) {
+//  5. ESPN-projected players Boris doesn't rank form a deep pool slotted
+//     strictly below their position's Boris tail, so a big league's late
+//     rounds stay trackable without ever outranking a Boris opinion.
+func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLast map[string][]string) ([]model.Player, error) {
 	type boardPlayer struct {
-		row  borisRow
-		info espnInfo
-		ok   bool
-		vor  float64
+		name    string
+		pos     string
+		posTier int
+		info    espnInfo
+		ok      bool
+		vor     float64
 	}
+	matched := map[string]bool{}
 
 	posPlayers := map[string][]boardPlayer{}
 	pointsByPos := map[string][]float64{}
@@ -475,8 +488,11 @@ func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLas
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
 		for _, r := range rows {
-			info, ok := lookupESPN(byName, byLast, r.Name, pos)
-			posPlayers[pos] = append(posPlayers[pos], boardPlayer{row: r, info: info, ok: ok})
+			info, key, ok := lookupESPN(byName, byLast, r.Name, pos)
+			if ok {
+				matched[key] = true
+			}
+			posPlayers[pos] = append(posPlayers[pos], boardPlayer{name: r.Name, pos: pos, posTier: r.Tier, info: info, ok: ok})
 		}
 	}
 
@@ -517,10 +533,51 @@ func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLas
 		posPlayers[pos] = players
 	}
 
+	// Deep pool: ESPN-projected players Boris doesn't rank. Their VOR is
+	// capped just under the position's Boris tail so they can never leapfrog
+	// a ranked player (also containing any duplicate from a failed join).
+	const deepPoolMinPoints = 20
+	minVOR := map[string]float64{}
+	maxPosTier := map[string]int{}
+	for pos, players := range posPlayers {
+		minVOR[pos] = players[len(players)-1].vor
+		for _, p := range players {
+			if p.posTier > maxPosTier[pos] {
+				maxPosTier[pos] = p.posTier
+			}
+		}
+	}
+	var deep []boardPlayer
+	for key, info := range byName {
+		if matched[key] || info.Proj == nil {
+			continue
+		}
+		pos := strings.SplitN(key, ":", 2)[0]
+		if _, ok := posPlayers[pos]; !ok {
+			continue
+		}
+		pts := LeaguePoints(*info.Proj, league.Scoring)
+		if pts < deepPoolMinPoints {
+			continue
+		}
+		vor := pts - repl[pos]
+		if cap := minVOR[pos] - 0.001; vor > cap {
+			vor = cap
+		}
+		deep = append(deep, boardPlayer{name: info.Name, pos: pos, posTier: maxPosTier[pos] + 1, info: info, ok: true, vor: vor})
+	}
+	sort.Slice(deep, func(i, j int) bool {
+		if deep[i].vor != deep[j].vor {
+			return deep[i].vor > deep[j].vor
+		}
+		return deep[i].name < deep[j].name
+	})
+
 	var board []boardPlayer
 	for _, pos := range skillPositions {
 		board = append(board, posPlayers[pos]...)
 	}
+	board = append(board, deep...)
 	sort.SliceStable(board, func(i, j int) bool { return board[i].vor > board[j].vor })
 
 	vals := make([]float64, len(board))
@@ -533,34 +590,46 @@ func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLas
 	for i, p := range board {
 		players = append(players, model.Player{
 			Tier:     tiers[i],
-			PosTier:  p.row.Tier,
+			PosTier:  p.posTier,
 			Rank:     i + 1,
-			Name:     p.row.Name,
+			Name:     p.name,
 			Team:     p.info.Team,
-			Position: model.Position(p.row.Position),
+			Position: model.Position(p.pos),
 			ByeWeek:  p.info.Bye,
 			ADP:      p.info.ADP,
 			VOR:      p.vor,
 		})
 	}
 
-	// DST then K below the skill board, keeping their own Boris tier shapes.
+	// DST then K below the skill board, keeping their own Boris tier shapes,
+	// each followed by the ESPN-only units Boris doesn't rank (a 16-team
+	// draft needs all 32 DSTs on the board), ordered by ADP.
 	maxTier, rank := 0, len(players)
 	for _, p := range players {
 		if p.Tier > maxTier {
 			maxTier = p.Tier
 		}
 	}
-	for _, unit := range []string{league.BorisDST, league.BorisK} {
-		rows, err := fetchBoris(unit, offline)
+	for _, unit := range []struct {
+		url     string
+		pos     string
+		keyPref string
+	}{
+		{league.BorisDST, "DST", "dst:"},
+		{league.BorisK, "K", "K:"},
+	} {
+		rows, err := fetchBoris(unit.url, offline)
 		if err != nil {
 			return nil, err
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Rank < rows[j].Rank })
-		unitMaxTier := 0
+		unitMaxTier, borisMaxPosTier := maxTier, 0
 		for _, r := range rows {
 			rank++
-			info, _ := lookupESPN(byName, byLast, r.Name, r.Position)
+			info, key, ok := lookupESPN(byName, byLast, r.Name, r.Position)
+			if ok {
+				matched[key] = true
+			}
 			players = append(players, model.Player{
 				Tier:     maxTier + r.Tier,
 				PosTier:  r.Tier,
@@ -574,6 +643,44 @@ func loadVORBoard(league League, offline bool, byName map[string]espnInfo, byLas
 			if maxTier+r.Tier > unitMaxTier {
 				unitMaxTier = maxTier + r.Tier
 			}
+			if r.Tier > borisMaxPosTier {
+				borisMaxPosTier = r.Tier
+			}
+		}
+		var extras []espnInfo
+		for key, info := range byName {
+			if !matched[key] && strings.HasPrefix(key, unit.keyPref) {
+				extras = append(extras, info)
+			}
+		}
+		sort.Slice(extras, func(i, j int) bool {
+			ai, aj := extras[i].ADP, extras[j].ADP
+			if ai <= 0 {
+				ai = 9999
+			}
+			if aj <= 0 {
+				aj = 9999
+			}
+			if ai != aj {
+				return ai < aj
+			}
+			return extras[i].Name < extras[j].Name
+		})
+		if len(extras) > 0 {
+			unitMaxTier++
+		}
+		for _, info := range extras {
+			rank++
+			players = append(players, model.Player{
+				Tier:     unitMaxTier,
+				PosTier:  borisMaxPosTier + 1,
+				Rank:     rank,
+				Name:     info.Name,
+				Team:     info.Team,
+				Position: model.Position(unit.pos),
+				ByeWeek:  info.Bye,
+				ADP:      info.ADP,
+			})
 		}
 		maxTier = unitMaxTier
 	}

@@ -129,6 +129,13 @@ position; the league's own economics decide how positions interleave.**
    board (their projections are unreliable and nobody should draft them
    early anyway).
 
+7. **Deep pool**: ESPN-projected players Boris doesn't rank are appended
+   with VOR capped strictly below their position's Boris tail, and every
+   unranked DST/K follows the ranked ones by ADP. A 16-team draft makes
+   ~240 picks; the board carries ~400 players so every pick stays
+   trackable, and the cap guarantees pool players never outrank a Boris
+   opinion.
+
 `-classic` skips steps 2–5 and reproduces Boris's combined board directly.
 The VOR path also degrades to classic automatically if ESPN data is
 unavailable and uncached.
